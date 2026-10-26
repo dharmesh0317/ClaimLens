@@ -5,6 +5,17 @@ import re
 import sys
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # the rule is plain regex, so stub the modules that need Gemini / the embedding model
 for mod, names in {
     "claim_extractor": ("extract_claim", "extract_claim_from_image", "llm_json"),

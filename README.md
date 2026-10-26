@@ -33,6 +33,10 @@ This project does **not** decide what is true. It finds published fact-checks, c
 - **Says "nothing found" honestly.** If no fact-check exists, it says so and does not guess.
 - **Optional AI second opinion.** When nothing is found, a separate button asks Gemini with Google Search to read current sources. It is **clearly labelled "not a fact-check"**, runs only on request, and was not part of the evaluation.
 - **Flags lender offers instead of rating them.** A message like "Your loan amount has increased … account xxx8898" is an offer, not a rumour, so it is never given a true or false verdict. ClaimLens shows a safety notice and runs an automatic web lookup of whether the named company is registered (for example with the RBI). That lookup is labelled as checking **the company only, not whether the message is genuine**, because scammers copy real company names.
+- **Translate the AI answer.** The AI second opinion has a button to read it in English (when it is in Hindi or Punjabi) or in Hindi (when it is in English), and back to the original. The translation keeps the source numbers and is labelled "Translated by AI".
+- **Share a result.** "Copy summary" and "Send on WhatsApp" turn a result into a short plain-text message with the verdict, the claim and up to three sources, ending with a line saying ClaimLens only points to fact-checks published by others.
+- **Recent checks.** The last 12 results are kept **in your browser only** (localStorage), so you can reopen one without searching again. They can be cleared with one click. Offer alerts and "no claim" results are not saved, and the message text is not stored.
+- **Easy to use.** Paste button for the clipboard, example messages (rumours and true facts) in English, Hindi and Punjabi, a step-by-step progress view while it works, and a light, dark or system theme.
 
 ## Scope
 
@@ -41,7 +45,7 @@ ClaimLens does one thing: it finds **published fact-checks** for a claim. It is 
 | Input | What ClaimLens does |
 |---|---|
 | A viral claim or rumour | Searches published fact-checks and shows the ones about the same claim |
-| A claim with no published fact-check | Says so. Offers the optional AI check, labelled "not a fact-check" |
+| A claim with no published fact-check (including most true, everyday facts) | Says so. Offers the optional AI check, labelled "not a fact-check" |
 | A personal offer or account alert (masked account number, "your loan amount", amounts) | Shows a safety notice and a company-registration lookup. **Never** rates the message true or false |
 | A message with no checkable claim | Says so |
 
@@ -188,6 +192,7 @@ python test_notice.py                                # offer/alert rule: must ca
 | `POST` | `/check` | `{ "text": "…" }` (5–3000 chars) | status, extracted claim, matches, related |
 | `POST` | `/check-image` | multipart `file` (PNG, JPG or WebP, up to 5 MB) | same, plus the text read from the image |
 | `POST` | `/ai-check` | `{ "claim": "…", "message": "…", "kind": "claim" \| "company" }` (claim 5–600 chars, message up to 1500, `kind` defaults to `claim`) | verdict, summary with citations, sources. Rate-limited (5 per minute), cached 24 h |
+| `POST` | `/translate` | `{ "text": "…", "target": "en" \| "hi" }` (text 5–2000 chars) | `{ "text": "…", "target": "…" }`. Used by the translate button. No web search. Shares the `/ai-check` rate limit, cached 24 h |
 
 `status` is one of `match`, `no_match`, `no_claim`, `notice` (a personal offer or account alert, with a `notice` object of safety points) or `unjudged` (search worked but the judge was unavailable).
 
@@ -197,24 +202,26 @@ python test_notice.py                                # offer/alert rule: must ca
 
 ```
 backend/
-├── main.py              FastAPI app: /check, /check-image, /ai-check
+├── main.py              FastAPI app: /check, /check-image, /ai-check, /translate
 ├── pipeline.py          extract → search → judge → rank, plus the offer/alert rule
 ├── claim_extractor.py   Gemini client, claim extraction (text and image), cache
 ├── factcheck_api.py     Google Fact Check Tools API client
 ├── fallback_search.py   Tavily search limited to fact-check sites
 ├── reranker.py          local embedding judge
 ├── rank.py              orders results by similarity to the claim
-├── ai_check.py          Gemini + Google Search: the optional claim check and the company lookup
+├── ai_check.py          Gemini + Google Search: the optional claim check, the company lookup, and answer translation
 ├── test_notice.py       tests the offer/alert rule against 90+ known claims
 ├── eval/                labelled data and evaluation scripts
 ├── test_screenshots.py  runs a folder of screenshots through the pipeline
 └── try_ai_check.py      one-off test of the AI check
 frontend/src/
-├── App.jsx              page, input tabs, how-it-works
-├── Results.jsx          verdict, offer notice, filters, result rows
-├── AiCheck.jsx          the "Ask AI" panel and the company lookup panel
+├── App.jsx              page, input tabs, examples, recent checks, progress view
+├── Results.jsx          verdict, offer notice, share bar, filters, result rows
+├── AiCheck.jsx          the "Ask AI" panel, company lookup, translate button
+├── history.js           recent checks saved in the browser
+├── theme.js             light / dark / system theme
 ├── Graphics.jsx         icons and verdict gauge
-└── factcheckUtils.js    verdict logic, de-duplication, formatting
+└── factcheckUtils.js    verdict logic, de-duplication, share text, formatting
 ```
 
 ## Reproduce the evaluation
@@ -239,12 +246,27 @@ python evaluate_test.py          # strict and family metrics, bootstrap interval
 
 `evaluate_test.py` prints the prompt fingerprint and thresholds first so you can check nothing changed between labelling and scoring.
 
+## Run with Docker
+
+Docker Compose runs the FastAPI backend and builds the React frontend as a production image served by Nginx. The frontend is available at [http://localhost:3000](http://localhost:3000), and the backend health endpoint is available at [http://localhost:8000/health](http://localhost:8000/health).
+
+1. Put the backend keys in `backend/.env`. Docker Compose loads that existing file into the backend container; you do not need to create a duplicate root `.env` file. `TAVILY_API_KEY` is optional. The other keys are needed for the corresponding search and AI features.
+2. Build and start the services:
+
+   ```bash
+   docker compose up --build
+   ```
+3. Open [http://localhost:3000](http://localhost:3000). Stop the services with `Ctrl+C`, or run `docker compose down`.
+
+The backend `.env` file is excluded from the Docker build context and is not copied into the image; Compose reads it at startup. Do not put secrets in a Dockerfile or commit them.
+
 ## Privacy and responsible use
 
 - Text you paste and screenshots you upload are sent to **Google's Gemini API**. The UI says so and suggests cropping out names and phone numbers.
-- The "Ask AI" check also sends the claim text to **Google Search**, and says so before you click.
+- The "Ask AI" check also sends the claim text to **Google Search**, and says so before you click. The translate button sends only the AI's answer text to Gemini.
 - For an offer or account alert, the company lookup runs **automatically** and sends the message text to Gemini and Google Search. The panel says so. Do not paste messages that contain account numbers, OTPs or other secrets you do not want sent.
-- Nothing is stored except the local response caches (`llm_cache.json`, `ai_cache.json`). Keep `.env` and both cache files out of git.
+- The server stores nothing except the local response caches (`llm_cache.json`, `ai_cache.json`). Keep `.env` and both cache files out of git.
+- "Recent checks" and the theme choice live only in your own browser. "Clear history" in the app removes them.
 - The tool only points to published fact-checks. It never labels a claim true or false on its own authority, and it never presents the AI second opinion as a fact-check.
 
 ## Limitations
@@ -263,7 +285,7 @@ python evaluate_test.py          # strict and family metrics, bootstrap interval
 - Translate Punjabi claims to English before embedding (Punjabi recall is the weakest point)
 - Index a multilingual fact-check dataset to cover claims the API misses
 - Real-screenshot test set
-- A Telegram or WhatsApp bot front end
+- Hindi and Punjabi interface text
 - Deployment
 
 ## Built with

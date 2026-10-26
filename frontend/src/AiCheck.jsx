@@ -83,6 +83,7 @@ export default function AiCheck({ claim, message = "", kind = "claim", auto = fa
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const ctrl = useRef(null);
+  const [tr, setTr] = useState({ show: false, busy: false, error: "", text: {} });
 
   useEffect(() => {
     if (auto) run(); // the company check starts by itself; the cache makes repeats free
@@ -96,6 +97,7 @@ export default function AiCheck({ claim, message = "", kind = "claim", auto = fa
     ctrl.current = c;
     setState("loading");
     setError("");
+    setTr({ show: false, busy: false, error: "", text: {} });
     try {
       const res = await fetch(`${API}/ai-check`, {
         method: "POST",
@@ -158,11 +160,45 @@ export default function AiCheck({ claim, message = "", kind = "claim", auto = fa
   }
 
   const verdict = data.verdict in labels ? data.verdict : "unclear";
+  const summaryLang = /[਀-੿]/.test(data.summary) ? "pa" : /[ऀ-ॿ]/.test(data.summary) ? "hi" : "en";
+  const altTarget = summaryLang === "en" ? "hi" : "en";
+  const showingAlt = tr.show && tr.text[altTarget];
+  const shown = showingAlt ? tr.text[altTarget] : data.summary;
+
+  async function toggleTranslate() {
+    if (tr.show) return setTr((t) => ({ ...t, show: false, error: "" }));
+    if (tr.text[altTarget]) return setTr((t) => ({ ...t, show: true }));
+    setTr((t) => ({ ...t, busy: true, error: "" }));
+    try {
+      const res = await fetch(`${API}/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: data.summary, target: altTarget }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Translation failed. Try again later.");
+      setTr((t) => ({ ...t, busy: false, show: true, text: { ...t.text, [altTarget]: body.text } }));
+    } catch (e) {
+      setTr((t) => ({ ...t, busy: false, error: e.message || "Translation failed. Try again later." }));
+    }
+  }
   return (
     <section className={`ai ai-answer ai-v-${verdict}`} aria-labelledby="ai-title">
       <div className="ai-tag">{copy.tag}</div>
       <h3 id="ai-title">{labels[verdict]}</h3>
-      <Summary text={data.summary} claimLang={claimLang} />
+      <Summary text={shown} claimLang={showingAlt ? langAttr(altTarget) : summaryLang} />
+
+      <div className="ai-translate">
+        <button type="button" className="ghost ghost-sm" onClick={toggleTranslate} disabled={tr.busy}>
+          {tr.busy ? "Translating…" : showingAlt ? "Show original" : altTarget === "en" ? "Read in English" : "हिन्दी में पढ़ें"}
+        </button>
+        {tr.error && (
+          <span className="ai-error-inline" role="alert">
+            {tr.error}
+          </span>
+        )}
+        {showingAlt && <span className="ai-tr-note">Translated by AI</span>}
+      </div>
 
       {data.sources?.length > 0 && (
         <ol className="ai-sources">

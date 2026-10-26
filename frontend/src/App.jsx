@@ -3,7 +3,20 @@ import "./App.css";
 import Results from "./Results.jsx";
 import { clearHistory, loadHistory, saveToHistory } from "./history.js";
 import { clip, overallVerdict, timeAgo, verdictCounts } from "./factcheckUtils.js";
-import { HeroArt, IconAlert, IconCheck, IconImage, IconSearch, IconText, IconUpload, Logo } from "./Graphics.jsx";
+import {
+  HeroArt,
+  IconAlert,
+  IconClipboard,
+  IconImage,
+  IconMonitor,
+  IconMoon,
+  IconSearch,
+  IconSun,
+  IconText,
+  IconUpload,
+  Logo,
+} from "./Graphics.jsx";
+import { useTheme } from "./theme.js";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const MAX_CHARS = 3000;
@@ -19,12 +32,12 @@ const EXAMPLES = [
     text: "Bhai ye forward kar do, kal se sabhi ATM se 500 ke note band ho jayenge, RBI ne order nikala hai",
   },
   {
-    label: "Free mobile recharge",
+    label: "Free recharge",
     tag: "हिन्दी",
     text: "मोदी सरकार सभी को फ्री मोबाइल रिचार्ज दे रही है, इस लिंक पर क्लिक करके पाएं",
   },
   {
-    label: "Cow urine and coronavirus",
+    label: "Cow urine and COVID",
     tag: "ਪੰਜਾਬੀ",
     text: "ਗਾਂ ਦਾ ਮੂਤਰ ਪੀਣ ਨਾਲ ਕੋਰੋਨਾ ਠੀਕ ਹੋ ਜਾਂਦਾ ਹੈ",
   },
@@ -32,6 +45,24 @@ const EXAMPLES = [
     label: "Lemon water and cancer",
     tag: "English",
     text: "Drinking hot water with lemon every morning cures cancer, doctors are hiding this!",
+  },
+  {
+    label: "Chandrayaan-3 landing",
+    tag: "English",
+    text: "India's Chandrayaan-3 landed near the Moon's south pole in August 2023",
+    fact: true,
+  },
+  {
+    label: "WHO and COVID-19",
+    tag: "हिन्दी",
+    text: "WHO ने मार्च 2020 में कोविड-19 को वैश्विक महामारी घोषित किया था",
+    fact: true,
+  },
+  {
+    label: "Chandigarh capital",
+    tag: "ਪੰਜਾਬੀ",
+    text: "ਚੰਡੀਗੜ੍ਹ ਪੰਜਾਬ ਅਤੇ ਹਰਿਆਣਾ ਦੋਵਾਂ ਰਾਜਾਂ ਦੀ ਰਾਜਧਾਨੀ ਹੈ",
+    fact: true,
   },
 ];
 
@@ -43,20 +74,60 @@ function messageFor(status, data) {
   return "Something went wrong. Try again.";
 }
 
-function Skeleton() {
+function ThemeToggle({ theme, setTheme }) {
+  const options = [
+    ["light", "Light theme", IconSun],
+    ["system", "Match my system", IconMonitor],
+    ["dark", "Dark theme", IconMoon],
+  ];
   return (
-    <div className="skeleton" aria-hidden="true">
-      {[0, 1, 2].map((i) => (
-        <div className="skeleton-row" key={i}>
-          <span className="skeleton-avatar" />
-          <div className="skeleton-lines">
-            <span className="skeleton-bar short" />
-            <span className="skeleton-bar" />
-            <span className="skeleton-bar medium" />
-          </div>
-        </div>
+    <div className="theme" role="group" aria-label="Colour theme">
+      {options.map(([key, label, Icon]) => (
+        <button
+          type="button"
+          key={key}
+          className="theme-btn"
+          aria-pressed={theme === key}
+          aria-label={label}
+          title={label}
+          onClick={() => setTheme(key)}
+        >
+          <Icon width={16} height={16} />
+        </button>
       ))}
     </div>
+  );
+}
+
+// The server does not report progress, so the steps advance on a timer. They show the order of work, not live status.
+function ScanSteps({ image }) {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setSec((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const steps = [
+    { at: 0, label: image ? "Reading the screenshot" : "Reading your message", note: "Finding the claim worth checking" },
+    { at: 4, label: "Searching published fact-checks", note: "Looking across fact-checkers' sites" },
+    { at: 10, label: "Comparing what we found", note: "Keeping only results about this claim" },
+  ];
+  let current = 0;
+  steps.forEach((s, i) => {
+    if (sec >= s.at) current = i;
+  });
+  return (
+    <ol className="steps" aria-hidden="true">
+      {steps.map((s, i) => (
+        <li key={s.label} className={i < current ? "done" : i === current ? "now" : "next"}>
+          <span className="step-mark">{i < current ? "✓" : i === current ? <span className="step-spin" /> : ""}</span>
+          <span>
+            <strong>{s.label}</strong>
+            {i === current && <small>{s.note}</small>}
+          </span>
+        </li>
+      ))}
+      <li className="steps-time">{sec}s elapsed{sec >= 18 ? ". Slow answers usually mean the services are busy." : ""}</li>
+    </ol>
   );
 }
 
@@ -71,6 +142,9 @@ export default function App() {
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
   const [history, setHistory] = useState(() => loadHistory());
+  const [quick, setQuick] = useState(() => (loadHistory().length ? "recent" : "examples"));
+  const [notice, setNotice] = useState("");
+  const [theme, setTheme] = useTheme();
 
   const abortRef = useRef(null);
   const outcomeRef = useRef(null);
@@ -147,6 +221,40 @@ export default function App() {
     setHistory(clearHistory());
   }
 
+  async function pasteFromClipboard() {
+    setNotice("");
+    try {
+      // a copied screenshot first, then plain text
+      if (navigator.clipboard?.read) {
+        try {
+          for (const item of await navigator.clipboard.read()) {
+            const type = item.types.find((t) => t.startsWith("image/"));
+            if (type) {
+              const blob = await item.getType(type);
+              attach(new File([blob], `pasted-screenshot.${type.split("/")[1]}`, { type }));
+              return;
+            }
+          }
+        } catch {
+          /* fall through to readText */
+        }
+      }
+      const clip = await navigator.clipboard.readText();
+      if (!clip.trim()) {
+        setNotice("The clipboard is empty.");
+        return;
+      }
+      setMode("text");
+      setFile(null);
+      setResult(null);
+      setError("");
+      setText(clip.slice(0, MAX_CHARS));
+      if (clip.length > MAX_CHARS) setNotice(`Trimmed to the first ${MAX_CHARS.toLocaleString()} characters.`);
+    } catch {
+      setNotice("Your browser blocked clipboard access. Click in the box and press Ctrl+V instead.");
+    }
+  }
+
   function cancel() {
     abortRef.current?.abort("cancel");
     setLoading(false);
@@ -221,19 +329,25 @@ export default function App() {
   }
 
   const showExamples = !result && !loading && !error;
+  const compact = Boolean(result || loading || error);
+  const hasHistory = history.length > 0;
+  const quickTab = hasHistory ? quick : "examples";
 
   return (
     <>
-      <header className="hero" id="top">
+      <header className={`hero${compact ? " hero-compact" : ""}`} id="top">
         <div className="container">
           <nav className="topbar" aria-label="Main">
             <a className="brand" href="#top">
               <Logo />
               <span>ClaimLens</span>
             </a>
-            <a className="toplink" href="#how">
-              How it works
-            </a>
+            <div className="topbar-right">
+              <ThemeToggle theme={theme} setTheme={setTheme} />
+              <a className="toplink" href="#how">
+                How it works
+              </a>
+            </div>
           </nav>
 
           <div className="hero-grid">
@@ -242,20 +356,9 @@ export default function App() {
                 Was that forward already <span className="nowrap">fact-checked?</span>
               </h1>
               <p className="lede">
-                Paste the message or drop a screenshot. We search the <span className="nowrap">fact-checks</span> that newsrooms have already published, in English,
+                Paste a message or drop a screenshot. We find the fact-checks newsrooms have already published, in English,
                 Hindi and Punjabi.
               </p>
-              <ul className="hero-points">
-                <li>
-                  <IconCheck width={18} height={18} strokeWidth={2.6} /> Shows who checked it, when, and what they found
-                </li>
-                <li>
-                  <IconCheck width={18} height={18} strokeWidth={2.6} /> Reads screenshots, not just text
-                </li>
-                <li>
-                  <IconCheck width={18} height={18} strokeWidth={2.6} /> Says so when nothing has been published
-                </li>
-              </ul>
             </div>
             <HeroArt className="hero-art" />
           </div>
@@ -264,7 +367,7 @@ export default function App() {
 
       <main className="container main">
         <section
-          className={`composer${dragging ? " composer-drag" : ""}`}
+          className={`composer${dragging ? " composer-drag" : ""}${result ? " composer-compact" : ""}`}
           aria-label="Check a forward"
           onPaste={onPaste}
           onDragOver={(e) => {
@@ -301,7 +404,6 @@ export default function App() {
                 <IconImage width={18} height={18} /> Screenshot
               </button>
             </div>
-            <span className="hint">Ctrl + Enter to check</span>
           </div>
 
           <div id="panel-input" role="tabpanel" aria-labelledby={mode === "text" ? "tab-text" : "tab-image"}>
@@ -321,11 +423,8 @@ export default function App() {
                   placeholder="Paste the forwarded message here"
                   maxLength={MAX_CHARS}
                   disabled={loading}
-                  rows={6}
+                  rows={4}
                 />
-                <p className="count" aria-live="off">
-                  {text ? `${text.length.toLocaleString()} / ${MAX_CHARS.toLocaleString()}` : "\u00a0"}
-                </p>
               </>
             ) : file ? (
               <div className="attached">
@@ -360,6 +459,18 @@ export default function App() {
           </div>
 
           <div className="composer-actions">
+            <span className="composer-meta">
+              {mode === "text" && text ? (
+                `${text.length.toLocaleString()} / ${MAX_CHARS.toLocaleString()}`
+              ) : (
+                <span className="hint">Ctrl + Enter to check</span>
+              )}
+            </span>
+            {!file && (
+              <button type="button" className="ghost" onClick={pasteFromClipboard} disabled={loading}>
+                <IconClipboard width={18} height={18} /> Paste
+              </button>
+            )}
             {(text || file || result) && (
               <button type="button" className="ghost" onClick={clearAll}>
                 Clear
@@ -370,6 +481,11 @@ export default function App() {
               {loading ? "Checking" : mode === "image" ? "Check screenshot" : "Check forward"}
             </button>
           </div>
+          {notice && (
+            <p className="composer-notice" role="status">
+              {notice}
+            </p>
+          )}
         </section>
 
         <p className="scope-note">
@@ -378,45 +494,62 @@ export default function App() {
         </p>
 
         {showExamples && (
-          <div className="examples">
-            <span className="examples-label">Try an example</span>
-            {EXAMPLES.map((ex) => (
-              <button type="button" className="example" key={ex.label} onClick={() => fillExample(ex)}>
-                {ex.label}
-                <span className="example-tag" lang={ex.tag === "हिन्दी" ? "hi" : ex.tag === "ਪੰਜਾਬੀ" ? "pa" : "en"}>
-                  {ex.tag}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {showExamples && history.length > 0 && (
-          <section className="history" aria-labelledby="history-title">
-            <div className="history-head">
-              <h2 id="history-title">Recent checks</h2>
-              <span className="history-note">Saved only in this browser</span>
-              <button type="button" className="ghost" onClick={wipeHistory}>
-                Clear history
-              </button>
+          <section className="quick" aria-label="Examples and recent checks">
+            <div className="quick-head">
+              <div className="tabs tabs-sm" role="group" aria-label="Show examples or recent checks">
+                <button type="button" className="tab" aria-pressed={quickTab === "examples"} onClick={() => setQuick("examples")}>
+                  Try an example
+                </button>
+                {hasHistory && (
+                  <button type="button" className="tab" aria-pressed={quickTab === "recent"} onClick={() => setQuick("recent")}>
+                    Recent <span className="tab-n">{history.length}</span>
+                  </button>
+                )}
+              </div>
+              {quickTab === "recent" && (
+                <>
+                  <span className="history-note">Saved only in this browser</span>
+                  <button type="button" className="ghost ghost-sm" onClick={wipeHistory}>
+                    Clear history
+                  </button>
+                </>
+              )}
             </div>
-            <ul className="history-list">
-              {history.map((item) => {
-                const r = item.result;
-                const matches = r.matches || [];
-                const v = r.status === "match" ? overallVerdict(verdictCounts(matches)) : null;
-                const badge = r.status === "match" ? (v ? v.label : "Fact-checks found") : "Nothing found";
-                return (
-                  <li key={item.id}>
-                    <button type="button" className="history-item" onClick={() => openFromHistory(item)}>
-                      <span className={`history-badge hb-${v ? v.key : r.status === "match" ? "found" : "none"}`}>{badge}</span>
-                      <span className="history-claim">{clip(item.claim, 110)}</span>
-                      <time dateTime={item.t}>{timeAgo(item.t)}</time>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+
+            {quickTab === "examples" ? (
+              <div className="examples">
+                {EXAMPLES.map((ex) => (
+                  <button type="button" className="example" key={ex.label} onClick={() => fillExample(ex)}>
+                    {ex.label}
+                    <span className="example-tag" lang={ex.tag === "हिन्दी" ? "hi" : ex.tag === "ਪੰਜਾਬੀ" ? "pa" : "en"}>
+                      {ex.tag}
+                    </span>
+                  </button>
+                ))}
+                <p className="examples-hint">
+                  The first four are known rumours. The last three are true facts. Fact-checkers rarely review true
+                  facts, so expect "No fact-check yet", then use "Ask AI to check this".
+                </p>
+              </div>
+            ) : (
+              <ul className="history-list">
+                {history.map((item) => {
+                  const r = item.result;
+                  const matches = r.matches || [];
+                  const v = r.status === "match" ? overallVerdict(verdictCounts(matches)) : null;
+                  const badge = r.status === "match" ? (v ? v.label : "Fact-checks found") : "Nothing found";
+                  return (
+                    <li key={item.id}>
+                      <button type="button" className="history-item" onClick={() => openFromHistory(item)}>
+                        <span className={`history-badge hb-${v ? v.key : r.status === "match" ? "found" : "none"}`}>{badge}</span>
+                        <span className="history-claim">{clip(item.claim, 110)}</span>
+                        <time dateTime={item.t}>{timeAgo(item.t)}</time>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </section>
         )}
 
@@ -427,15 +560,14 @@ export default function App() {
               <div>
                 <p className="scan-title">Checking your forward</p>
                 <p className="scan-sub">
-                  We're reading the claim, searching published fact-checks and comparing what we find. This can take up to 30
-                  seconds.
+                  Most checks take 5 to 15 seconds. You can cancel at any time.
                 </p>
               </div>
               <button type="button" className="ghost" onClick={cancel}>
                 Cancel
               </button>
             </div>
-            <Skeleton />
+            <ScanSteps image={mode === "image"} />
           </section>
         )}
 
@@ -460,37 +592,25 @@ export default function App() {
 
         <section className="how" id="how" aria-labelledby="how-title">
           <h2 id="how-title">How this works</h2>
-          <div className="how-grid">
-            <ol className="how-steps">
-              <li>
-                <strong>We pull out the claim.</strong> An AI model reads your message or screenshot and writes the one thing
-                that can be checked.
-              </li>
-              <li>
-                <strong>We search published fact-checks.</strong> Short searches in English, Hindi and Punjabi go to fact-check
-                databases and newsroom sites.
-              </li>
-              <li>
-                <strong>We compare each one with your claim.</strong> The AI model says whether it covers the same claim, a
-                close variant, or just the same topic. If it is unavailable, we use a text similarity score and say so.
-              </li>
-            </ol>
-            <div className="how-limits">
-              <h3>What to know</h3>
-              <p>
-                We tested it on 20 forwards in English, Hindi, Hinglish and Punjabi. When a matching fact-check existed, the
-                right one was in the top three results every time.
-              </p>
-              <p>
-                Coverage is the limit. 6 of the 20 forwards found nothing at all, and all six were in Hindi, Hinglish or
-                Punjabi. No result doesn't mean a claim is true.
-              </p>
-              <p>
-                When nothing is found you can ask an AI to search the web. That answer is labelled, it is not a
-                fact-check, and it was not part of this test.
-              </p>
-            </div>
-          </div>
+          <ol className="how-steps">
+            <li>
+              <strong>We pull out the claim.</strong> An AI model reads your message or screenshot and writes the one thing
+              that can be checked.
+            </li>
+            <li>
+              <strong>We search published fact-checks.</strong> Short searches in English, Hindi and Punjabi go to fact-check
+              databases and newsroom sites.
+            </li>
+            <li>
+              <strong>We compare each one with your claim.</strong> The AI says whether it covers the same claim, a close
+              variant, or just the same topic.
+            </li>
+          </ol>
+          <p className="how-limits">
+            Coverage is the limit: many claims, especially in Hindi and Punjabi, have no published fact-check, and no result
+            doesn't mean a claim is true. The optional AI check is labelled and is not a fact-check. Test results are in the
+            project README.
+          </p>
         </section>
       </main>
 

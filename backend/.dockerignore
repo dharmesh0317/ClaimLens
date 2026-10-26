@@ -1,0 +1,9 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+.env
+llm_cache.json
+ai_cache.json
+screenshots
+*.log

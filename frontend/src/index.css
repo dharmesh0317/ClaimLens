@@ -13,8 +13,8 @@ html {
 
 body {
   margin: 0;
-  background: #f6f7fb;
-  color: #1a1d3f;
+  background: var(--paper, #f6f7fb);
+  color: var(--ink, #1a1d3f);
   /* Mukta covers Latin and Devanagari, Mukta Mahee covers Gurmukhi; Noto and system fonts are fallbacks */
   font-family: "Mukta", "Mukta Mahee", "Noto Sans Devanagari", "Noto Sans Gurmukhi", system-ui, -apple-system,
     "Segoe UI", sans-serif;

@@ -7,7 +7,13 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from ai_check import AiCheckError, ai_check, cached as ai_cached
+from ai_check import AiCheckError, ai_check, cached as ai_cached, translate as ai_translate
+
+
+def ai_translate_cached(text, target):
+    from ai_check import cached, _clean
+
+    return cached(_clean(text, 2000), "", "tr-" + target)
 from pipeline import check_forward
 
 app = FastAPI(title="ClaimLens")
@@ -89,6 +95,32 @@ class RateLimiter:
 
 ai_limiter = RateLimiter(limit=5, window=60)
 AI_ERROR_STATUS = {"quota": 429, "busy": 503, "failed": 502}
+
+
+class TranslateRequest(BaseModel):
+    text: str = Field(min_length=5, max_length=2000)
+    target: Literal["en", "hi"]
+
+
+@app.post("/translate")
+def translate_endpoint(req: TranslateRequest, request: Request):
+    """Translates an AI answer on request. Cached answers do not count against the limit."""
+    text = req.text.strip()
+    hit = ai_translate_cached(text, req.target)
+    if hit:
+        return hit
+    who = request.client.host if request.client else "unknown"
+    wait = ai_limiter.check(who)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many AI requests in a short time. Try again in {wait} seconds.",
+            headers={"Retry-After": str(wait)},
+        )
+    try:
+        return ai_translate(text, req.target)
+    except AiCheckError as e:
+        raise HTTPException(status_code=AI_ERROR_STATUS.get(e.kind, 502), detail=e.message)
 
 
 @app.post("/ai-check")

@@ -15,6 +15,17 @@ import sys
 import time
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from pipeline import check_forward
 
 folder = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent / "screenshots"

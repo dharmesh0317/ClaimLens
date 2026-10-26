@@ -283,6 +283,48 @@ def _log(model, result, attempt):
           f"grounded={result['grounded']} sources={len(result['sources'])} queries={len(result['queries'])}")
 
 
+TRANSLATE_PROMPT = """Translate the text below into {language}. Keep the meaning exactly; do not add or remove facts.
+Keep every citation marker such as [[1]] or [[2]] exactly as written, next to the same words.
+Keep names, numbers and currency amounts. Reply with the translation only, as plain text.
+
+TEXT:
+<<<
+{text}
+>>>"""
+TRANSLATE_TARGETS = {"en": "English", "hi": "Hindi (Devanagari script)"}
+
+
+def translate(text, target):
+    """Translate an AI answer into English or Hindi. Plain model call, no web search. Cached for 24 hours."""
+    if target not in TRANSLATE_TARGETS:
+        raise AiCheckError("failed", "That language is not supported.")
+    text = _clean(text, 2000)
+    hit = cached(text, "", "tr-" + target)
+    if hit:
+        return hit
+    prompt = TRANSLATE_PROMPT.format(language=TRANSLATE_TARGETS[target], text=text)
+    for attempt in range(len(RETRY_WAITS) + 1):
+        try:
+            resp = client.models.generate_content(model=MODEL, contents=prompt)
+            break
+        except errors.APIError as e:
+            code = getattr(e, "code", None)
+            if code == 429:
+                raise AiCheckError("quota", "The AI service has reached its limit for now. Try again later.") from e
+            if code in (500, 503, 504) and attempt < len(RETRY_WAITS):
+                time.sleep(RETRY_WAITS[attempt])
+                continue
+            raise AiCheckError("busy", "The AI service is busy right now. Try again in a minute.") from e
+        except Exception as e:
+            raise AiCheckError("busy", "Could not reach the AI service. Try again in a minute.") from e
+    out = " ".join((getattr(resp, "text", "") or "").split())
+    if not out:
+        raise AiCheckError("busy", "The translation came back empty. Try again.")
+    result = {"text": out, "target": target}
+    _cache_put(text, "", result, "tr-" + target)
+    return {**result, "cached": False}
+
+
 def ai_check(claim, message="", kind="claim"):
     """Run the grounded check. Raises AiCheckError. Returns the answer dict (cached for 24 hours)."""
     claim, message = _clean(claim, MAX_CLAIM_CHARS), _clean(message, MAX_MESSAGE_CHARS)
